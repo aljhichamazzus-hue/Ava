@@ -1,6 +1,7 @@
 package com.example.ava.wakewords.microwakeword
 
 import com.example.ava.wakewords.models.WakeWordWithId
+import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import timber.log.Timber
 import java.nio.ByteBuffer
@@ -16,6 +17,7 @@ class MicroWakeWord(
     private val inputTensorBuffer: TensorBuffer
     private val outputScale: Float
     private val outputZeroPoint: Int
+    private val outputDataType: DataType  // NEW: Store output data type
     private val probabilities = ArrayDeque<Float>(slidingWindowSize)
 
     init {
@@ -31,6 +33,7 @@ class MicroWakeWord(
         )
 
         val outputDetails = interpreter.getOutputTensor(0)
+        outputDataType = outputDetails.dataType()  // NEW: Get output data type
 
         val outputQuantParams = outputDetails.quantizationParams()
         outputScale = outputQuantParams.scale
@@ -51,10 +54,23 @@ class MicroWakeWord(
     }
 
     private fun getWakeWordProbability(input: ByteBuffer): Float {
-        val output = Array(1) { ByteArray(1) }
-        interpreter.run(input, output)
-        val probability = (output[0][0].toUByte().toFloat() - outputZeroPoint) * outputScale
-        return probability
+        return when (outputDataType) {
+            DataType.FLOAT32 -> {
+                // Handle FLOAT32 output
+                val output = Array(1) { FloatArray(1) }
+                interpreter.run(input, output)
+                output[0][0]  // Already dequantized
+            }
+            DataType.UINT8, DataType.INT8 -> {
+                // Handle UINT8/INT8 output (original code)
+                val output = Array(1) { ByteArray(1) }
+                interpreter.run(input, output)
+                (output[0][0].toUByte().toFloat() - outputZeroPoint) * outputScale
+            }
+            else -> {
+                throw IllegalArgumentException("Unsupported output data type: $outputDataType")
+            }
+        }
     }
 
     private fun isWakeWordDetected(probability: Float): Boolean {
